@@ -1,0 +1,75 @@
+Data Challenge
+
+## 1. Problem Definition
+We aim to predict next-period returns using historical information only.
+All evaluation is conducted under a strict time-series framework to avoid look-ahead bias.
+
+---
+
+## 2. Data Description
+- Asset universe:
+- Frequency:
+- Sample period:
+
+Potential data leakage risks are explicitly considered and mitigated.
+
+---
+
+## 3. Feature Engineering
+- Price-based features
+- Rolling statistics (backward-looking only)
+- Cross-sectional normalization by date
+- Winsorization to reduce outlier impact
+
+---
+
+## 4. Experimental Setup
+- Walk-forward / rolling window evaluation
+- No shuffling
+- Test data never used in training or tuning
+
+---
+
+## 5. Baseline Models
+- Linear regression / Ridge
+- XGBoost (default parameters)
+
+These serve as performance benchmarks.
+
+---
+
+## 6. Advanced Models
+- XGBoost with extended features
+- (Optional) Temporal feature extraction via LSTM
+
+Complexity is introduced only when justified by OOS improvement.
+
+---
+
+## 7. Evaluation Metrics
+- Information Coefficient (IC)
+- Rank IC
+- Portfolio-level long-short returns
+
+---
+
+## 8. Results
+- OOS IC summary
+- Rolling performance plots
+- Feature importance stability
+
+---
+
+## 9. Robustness Checks
+- Subperiod analysis
+- Turnover inspection
+- Sensitivity to hyperparameters
+
+---
+
+## 10. Limitations & Future Work
+- Limited sample size
+- Transaction costs not fully modeled
+- Regime dependence
+
+Results should be interpreted with these constraints in mind.
