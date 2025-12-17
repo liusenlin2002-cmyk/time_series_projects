@@ -1,0 +1,406 @@
+Demo A：单一特征 Marginal Alpha 检验（核心必做）
+
+目标：证明 某个新特征是否真的提供增量信息
+不是“IC涨了”，而是 “涨得有统计意义 & 稳定”
+
+A.1 设定背景（Markdown 可直接用）
+### Marginal Alpha Test for New Feature
+
+We evaluate whether the proposed feature provides incremental predictive power
+beyond a baseline model, using nested model comparison and residual tests.
+
+A.2 Step 1：定义 baseline vs augmented model
+baseline_features = [
+    'momentum_20',
+    'vol_20',
+    'size',
+    'turnover'
+]
+
+new_feature = ['lstm_signal']  # or any new feature
+
+X_base = df[baseline_features]
+X_aug  = df[baseline_features + new_feature]
+y = df['future_return']
+
+A.3 Step 2：Walk-forward / rolling 预测（防泄露）
+def rolling_ic(X, y, model, train_window=252, test_window=21):
+    ic_list = []
+
+    for start in range(0, len(X) - train_window - test_window, test_window):
+        train_idx = slice(start, start + train_window)
+        test_idx  = slice(start + train_window, start + train_window + test_window)
+
+        model.fit(X.iloc[train_idx], y.iloc[train_idx])
+        pred = model.predict(X.iloc[test_idx])
+
+        ic = np.corrcoef(pred, y.iloc[test_idx])[0, 1]
+        ic_list.append(ic)
+
+    return np.array(ic_list)
+
+A.4 Step 3：比较 IC 分布（不是均值）
+from xgboost import XGBRegressor
+
+model = XGBRegressor(
+    max_depth=3,
+    n_estimators=200,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8
+)
+
+ic_base = rolling_ic(X_base, y, model)
+ic_aug  = rolling_ic(X_aug,  y, model)
+
+delta_ic = ic_aug - ic_base
+
+A.5 Step 4：统计显著性（Newey–West）
+import statsmodels.api as sm
+
+nw_tstat = sm.OLS(
+    delta_ic,
+    np.ones(len(delta_ic))
+).fit(
+    cov_type='HAC',
+    cov_kwds={'maxlags':3}
+)
+
+print(nw_tstat.summary())
+
+你想看到什么？
+
+mean(ΔIC) > 0
+
+t-stat ≈ 2（哪怕 1.5 也能 defend）
+
+A.6 Step 5（⭐加分）：Residual Alpha Test
+# baseline residual
+model.fit(X_base, y)
+residual = y - model.predict(X_base)
+
+# correlation with new feature
+res_ic = np.corrcoef(residual, df['lstm_signal'])[0, 1]
+print("Residual IC:", res_ic)
+
+
+📌 如果 residual IC 仍显著：
+
+new feature contains orthogonal information
+
+A.7 面试一句话总结（你可以背）
+
+We test marginal alpha via nested model comparison and residual correlation tests, rather than relying solely on aggregate IC improvements.
+
+Demo B：时间序列因子 Demo（轻量级、可 defend）
+
+目标：不是战胜 XGBoost
+而是：提取 趋势 / regime / persistence 信号
+
+B.1 选型结论（你可以写在 Markdown）
+Given the limited sample size and noisy nature of return data,
+we use a lightweight temporal encoder instead of transformer-based models.
+
+B.2 Demo 1：Rolling CNN Trend Factor（推荐）
+构造输入
+def make_ts_dataset(returns, lookback=20):
+    X, y = [], []
+    for i in range(lookback, len(returns)):
+        X.append(returns[i-lookback:i])
+        y.append(returns[i])
+    return np.array(X), np.array(y)
+
+X_ts, y_ts = make_ts_dataset(df['return'].values)
+X_ts = X_ts[..., np.newaxis]
+
+CNN 模型（极其克制）
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv1D, GlobalAveragePooling1D, Dense
+
+model = Sequential([
+    Conv1D(16, kernel_size=3, activation='relu',
+           input_shape=(20, 1)),
+    GlobalAveragePooling1D(),
+    Dense(1)
+])
+
+model.compile(optimizer='adam', loss='mse')
+model.fit(X_ts, y_ts, epochs=10, batch_size=32, verbose=0)
+
+输出 TS 因子
+df['cnn_trend_signal'] = np.nan
+df.loc[df.index[20:], 'cnn_trend_signal'] = model.predict(X_ts).flatten()
+
+
+👉 这是一个 trend persistence factor
+
+B.3 Demo 2（可选）：LSTM 作为 Feature Extractor
+model = Sequential([
+    LSTM(32, input_shape=(20, 1)),
+    Dense(1)
+])
+model.compile(optimizer='adam', loss='mse')
+
+
+📌 你只用它的输出，不用它做最终预测
+
+B.4 把 TS 因子送入 XGBoost
+features = baseline_features + ['cnn_trend_signal']
+X = df[features]
+
+
+然后：
+
+回到 Demo A
+
+做 marginal alpha test
+
+B.5 如果面试官问：为啥不用 Transformer？
+
+你可以直接答：
+
+Given the limited time-series length and high noise level,
+transformers tend to overfit in this setting.
+We therefore focus on simpler temporal encoders and validate their marginal contribution.
+
+两个 Demo 的 正确心理定位
+Demo	面试官看到的信号
+Marginal alpha test	✅ 你像研究员
+TS factor demo	✅ 你有判断力
+不做 Transformer	✅ 你很克制
+最后给你一个 Squarepoint 风格总结句
+
+Alpha is not about complexity,
+but about incremental, testable information.
+
+如果你愿意，下一步我可以继续帮你：
+
+🎯 把这两个 demo 整合成一份完整 data challenge Notebook
+
+🧠 模拟面试官追问（逐行 challenge 你的假设）
+
+🔍 帮你判断：你这个 data challenge 已经到“刚刚好”了吗
+
+你选一个，我直接继续。
+
+1D CNN的信号需不需要rolling分X和Y然后输出值作为特征；model = Sequential([
+    Conv1D(16, kernel_size=3, activation='relu',
+           input_shape=(20, 1)),
+    GlobalAveragePooling1D(),
+    Dense(1)
+]) 这个是什么意思16是什么，input_shape（20，1）意思是每次选20个时间点的窗口序列吗，最后GlobalAveragePooling 意义和作用是什么，Dense在干嘛
+
+你问得非常到位，而且已经在问**“我是不是在偷偷做数据泄露 / 这个 TS 因子到底在学什么”**了。
+我分 两层来讲：
+① 这个 1D CNN 的信号到底应不应该 rolling 生成（这是核心）
+② 你贴的模型每一层在“金融语义”下到底是什么意思
+
+一、先给结论（你可以直接记）
+
+✅ 1D CNN 的信号必须 rolling 地生成，
+不能一次性 fit 再整体 predict。
+
+否则在 data challenge / Squarepoint 面试里，
+这是隐性数据泄露（look-ahead bias）。
+
+正确逻辑（非常重要）
+
+你要把 1D CNN 当成：“时间序列特征提取器”,不是一个全样本拟合的预测器。
+
+对每一个预测时点 t
+
+只用 t-L,..t-1 的历史
+
+CNN 输出一个数：
+
+trend strength
+
+persistence
+
+regime score
+
+把这个数作为 feature_t
+
+再送入 XGBoost / 线性模型
+
+📌 所以答案是：
+
+是的，你必须 rolling 地构造 X、rolling 地输出 signal。
+
+推荐写法（简化但正确）
+def rolling_cnn_signal(returns, lookback=20, train_window=252):
+    signal = np.full(len(returns), np.nan)
+
+    for t in range(train_window + lookback, len(returns)):
+        train_slice = returns[t-train_window-lookback:t]
+        X, y = make_ts_dataset(train_slice, lookback)
+
+        model = build_cnn()
+        model.fit(X, y, epochs=5, verbose=0)
+
+        # 用最近一个窗口预测
+        last_window = returns[t-lookback:t].reshape(1, lookback, 1)
+        signal[t] = model.predict(last_window)[0,0]
+
+    return signal
+
+
+你在 Notebook 里可以明确写：
+
+The CNN model is retrained in a rolling manner to avoid look-ahead bias.
+
+这句话非常加分。
+
+二、你贴的 CNN 模型：每一层在“金融意义”上干嘛？
+model = Sequential([
+    Conv1D(16, kernel_size=3, activation='relu',
+           input_shape=(20, 1)),
+    GlobalAveragePooling1D(),
+    Dense(1)
+])
+
+
+我们逐层拆解 👇
+
+1️⃣ input_shape=(20, 1) 是什么意思？
+技术上：
+(时间长度, 特征维度)
+
+金融上：
+
+20：一个 rolling window（例如 1 个月）
+
+1：每个时间点只有一个变量（如 return）
+
+👉 等价于：
+
+“我每次给模型看 最近 20 天的收益序列”
+
+2️⃣ Conv1D(16, kernel_size=3, activation='relu')
+技术上：
+
+16：卷积核（filters）数量
+
+kernel_size=3：每次看 3 天的小局部结构
+
+relu：非线性
+
+金融直觉（非常重要）：
+
+你可以这样理解：
+
+“模型在用 16 种不同的方式，
+扫描 3 天收益的局部模式。”
+
+这 16 个 filter 可能在学：
+
+连续上涨
+
+V 型反转
+
+高波动 → 平稳
+
+jump 后回归
+
+📌 16 不是 magic number：
+
+8 / 16 / 32 都可以
+
+面试官不会在意这个数
+
+在意你知道它代表什么
+
+3️⃣ GlobalAveragePooling1D() 是干嘛的？（重点）
+技术上：
+
+对时间维度做 平均
+
+把 (time, filters) → (filters,)
+
+金融意义（非常非常关键）：
+
+它在问：
+“这个模式在整个窗口里出现得有多强 / 多稳定？”
+
+而不是：
+
+只看最后一天
+
+或记住具体位置
+
+为什么这在金融里是好事？
+
+return 噪声极大
+
+位置信息不稳定
+
+强度 > 精确时间点
+
+👉 它相当于在算：
+
+“过去 20 天里，这些模式整体强不强？”
+
+📌 这也是为什么 CNN 在金融里常常比 LSTM 稳定
+
+4️⃣ Dense(1) 在干嘛？
+技术上：
+
+线性组合所有 filter 输出
+
+输出一个标量
+
+金融解释：
+
+把所有 pattern 的强度，
+压缩成一个“趋势 / regime score”
+
+你可以叫它：
+
+cnn_trend_signal
+
+persistence_score
+
+temporal_alpha_proxy
+
+5️⃣ 这个 CNN 整体在“学什么”？
+
+一句话版本（你可以在面试里说）：
+
+The CNN aggregates local return patterns over a rolling window
+to produce a smooth measure of trend persistence.
+
+📌 这句话 非常 Squarepoint
+
+三、和 LSTM 的本质区别（面试常问）
+模型	在学什么
+LSTM	精确时间顺序、长期依赖
+1D CNN	局部模式 + 稳定强度
+CNN + GAP	低方差 TS 因子（推荐）
+四、如果面试官追问：那 Dense 是不是又在 overfit？
+
+你可以答：
+
+We keep the architecture intentionally shallow and use global pooling to control model variance.
+
+这句话 非常加分。
+
+五、你现在可以怎么用它（实战建议）
+推荐最优用法
+
+rolling CNN → cnn_signal
+
+加入 XGBoost
+
+做 marginal alpha test
+
+如果没提升 → 你也可以说：
+
+We find limited incremental value, which is consistent with the noisy nature of returns.
+
+📌 这也是一个好结果
+
+最后一句研究员视角总结
+
+在量化里，
+一个“解释得清楚、rolling 正确、不过拟合”的弱信号，
+远比一个“赢了几 bp 但你说不清为什么”的模型更值钱
